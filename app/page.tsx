@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type CSSProperties, type FormEvent } from 'react';
+import { useRef, useState, type CSSProperties, type FormEvent } from 'react';
 
 type Result = {
   decision: string;
@@ -21,23 +21,34 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  // Evita que una respuesta antigua aparezca después de cambiar los datos.
-  const [requestVersion, setRequestVersion] = useState(0);
+  // Identifica cada solicitud para evitar mostrar respuestas anteriores.
+  const requestVersion = useRef(0);
+
+  // Guarda los datos utilizados en el análisis mostrado.
+  const [analyzedAmounts, setAnalyzedAmounts] = useState<{
+    price: number;
+    budget: number;
+  } | null>(null);
 
   function clearPreviousResult() {
+    requestVersion.current += 1;
     setResult(null);
+    setAnalyzedAmounts(null);
     setError('');
-    setRequestVersion((version) => version + 1);
+    setBusy(false);
   }
 
   async function analyze(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    const currentVersion = ++requestVersion.current;
+    const currentPrice = Number(price);
+    const currentBudget = Number(budget);
+
     setError('');
     setResult(null);
+    setAnalyzedAmounts(null);
     setBusy(true);
-
-    const currentVersion = requestVersion;
 
     try {
       const response = await fetch('/api/analyze', {
@@ -47,8 +58,8 @@ export default function Home() {
         },
         body: JSON.stringify({
           item: item.trim(),
-          price: Number(price),
-          budget: Number(budget),
+          price: currentPrice,
+          budget: currentBudget,
           need: need.trim(),
           wait: Number(wait),
         }),
@@ -56,20 +67,47 @@ export default function Home() {
 
       const data = await response.json();
 
+      // Ignora respuestas que ya no corresponden al formulario actual.
+      if (currentVersion !== requestVersion.current) {
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(data.error || 'No se pudo analizar la compra');
       }
 
-      // La respuesta solo se muestra si corresponde a los datos enviados.
       setResult(data);
+      setAnalyzedAmounts({
+        price: currentPrice,
+        budget: currentBudget,
+      });
     } catch (err) {
+      if (currentVersion !== requestVersion.current) {
+        return;
+      }
+
       setError(
         err instanceof Error ? err.message : 'Error inesperado'
       );
     } finally {
-      setBusy(false);
+      if (currentVersion === requestVersion.current) {
+        setBusy(false);
+      }
     }
   }
+
+  // Formato de moneda mexicana.
+  function formatMoney(amount: number) {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: 'MXN',
+    }).format(amount);
+  }
+
+  // Mejora propuesta a partir del Persona Test simulado de Valeria.
+  const budgetDifference = analyzedAmounts
+    ? analyzedAmounts.price - analyzedAmounts.budget
+    : 0;
 
   const field: CSSProperties = {
     display: 'block',
@@ -269,7 +307,7 @@ export default function Home() {
       )}
 
       {/* RESULTADO */}
-      {result && (
+      {result && analyzedAmounts && (
         <section
           aria-live="polite"
           style={{
@@ -291,6 +329,57 @@ export default function Home() {
           </h2>
 
           <p>{result.reason}</p>
+
+          {/* MEJORA DEL PERSONA TEST */}
+          <div
+            style={{
+              background: '#ffffff',
+              border: '1px solid #77c1a8',
+              borderRadius: 12,
+              padding: 18,
+              marginTop: 18,
+              marginBottom: 18,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>
+              Tu presupuesto en números
+            </h3>
+
+            <p>
+              <strong>Precio de la compra:</strong>{' '}
+              {formatMoney(analyzedAmounts.price)}
+            </p>
+
+            <p>
+              <strong>Presupuesto disponible:</strong>{' '}
+              {formatMoney(analyzedAmounts.budget)}
+            </p>
+
+            {budgetDifference > 0 ? (
+              <p
+                style={{
+                  color: '#b42318',
+                  fontWeight: 700,
+                  lineHeight: 1.6,
+                }}
+              >
+                Esta compra supera tu presupuesto por{' '}
+                {formatMoney(budgetDifference)}.
+              </p>
+            ) : (
+              <p
+                style={{
+                  color: '#147d73',
+                  fontWeight: 700,
+                  lineHeight: 1.6,
+                }}
+              >
+                Esta compra está dentro de tu presupuesto.
+                Te quedarían{' '}
+                {formatMoney(Math.abs(budgetDifference))}.
+              </p>
+            )}
+          </div>
 
           <h3>Antes de decidir, pregúntate:</h3>
 
